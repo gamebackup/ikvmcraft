@@ -8,8 +8,31 @@ let config: MonoConfig;
 let exports: any;
 
 export let dotnetState = createState({
-	logs: [] as string[]
+	logs: [] as string[],
+	phase: "idle" as string,
+	progress: 0,
+	progressMax: 1,
+	statusText: "",
 });
+
+export function setPhase(phase: string, statusText: string, progress: number, progressMax: number) {
+	dotnetState.phase = phase;
+	dotnetState.statusText = statusText;
+	dotnetState.progress = progress;
+	dotnetState.progressMax = progressMax;
+	const bar = document.getElementById("bar") as HTMLDivElement | null;
+	if (bar) {
+		bar.style.width = progressMax > 0 ? `${Math.min(100, (progress / progressMax) * 100)}%` : "0%";
+	}
+}
+
+export function tickProgress(increment: number) {
+	dotnetState.progress = dotnetState.progress + increment;
+}
+
+export function setProgressMax(max: number) {
+	dotnetState.progressMax = max;
+}
 
 /*
 console.log = new Proxy(console.log, {
@@ -28,8 +51,8 @@ console.log = new Proxy(console.log, {
 
 const rootFolder = await navigator.storage.getDirectory();
 (globalThis as any).selectjar = async () => {
-	let [file] = await showOpenFilePicker();
-	const data = await file.getFile().then((r) => r.stream());
+	const fileHandle = await (window as any).showOpenFilePicker().then((handles: any[]) => handles[0]);
+	const data = await fileHandle.getFile().then((r: File) => r.stream());
 	let handle = await rootFolder.getFileHandle("main.jar", { create: true });
 	const writable = await handle.createWritable();
 	await data.pipeTo(writable);
@@ -37,34 +60,12 @@ const rootFolder = await navigator.storage.getDirectory();
 
 export async function initDotnet(canvas: HTMLCanvasElement) {
 	console.time("dotnet ");
+	setPhase("runtime", "Loading .NET runtime...", 0, 4);
+
 	runtime = await dotnet
 		.withConfig({ pthreadPoolInitialSize: 16 })
 		.withEnvironmentVariable("MONO_SLEEP_ABORT_LIMIT", "20000")
-		//.withEnvironmentVariable("MONO_LOG_LEVEL", "debug")
-		//.withEnvironmentVariable("MONO_LOG_MASK", "type")
-		//.withEnvironmentVariable("IKVM_FROMCLASS_TRACE", "1")
-		//.withEnvironmentVariable("IKVM_UNSAFE_OFFSET_TRACE", "1")
 		.withRuntimeOptions([
-			
-			/*
-			// jit functions quickly and jit more functions
-			`--jiterpreter-minimum-trace-hit-count=${500}`,
-
-			// monitor jitted functions for less time
-			`--jiterpreter-trace-monitoring-period=${100}`,
-
-			// reject less funcs
-			`--jiterpreter-trace-monitoring-max-average-penalty=${150}`,
-
-			// increase jit function limits
-			`--jiterpreter-wasm-bytes-limit=${64 * 1024 * 1024}`,
-			`--jiterpreter-table-size=${32 * 1024}`,
-
-			// print jit stats
-			`--jiterpreter-stats-enabled`,
-			*/
-			
-			
 			`--no-jiterpreter-traces-enabled`
 		])
 		.create();
@@ -75,6 +76,7 @@ export async function initDotnet(canvas: HTMLCanvasElement) {
 		pump();
 	}, 1);
 
+	setPhase("runtime", "Starting .NET runtime...", 1, 4);
 	config = runtime.getConfig();
 	exports = await runtime.getAssemblyExports(config.mainAssemblyName!);
 
@@ -89,10 +91,12 @@ export async function initDotnet(canvas: HTMLCanvasElement) {
 		exports,
 		canvas,
 	};
-	console.debug("PreInit...");
+
+	setPhase("runtime", "Running PreInit...", 2, 4);
 	await runtime.runMain();
+	setPhase("runtime", "Initializing IKVM...", 3, 4);
 	await exports.IkvmWasm.PreInit(location.href, [["org.lwjgl.util.Debug", "true"], ["org.lwjgl.util.DebugLoader", "true"]]);
-	console.debug("dotnet initialized");
+	setPhase("runtime", "Runtime ready", 4, 4);
 	console.timeEnd("dotnet ");
 }
 

@@ -1,0 +1,20 @@
+# Build locally or via GitHub Actions, then upload frontend/dist/ manually.
+# Netlify doesn't have the .NET 10 + Emscripten toolchain needed for the full build.
+[build]
+  publish = "frontend/dist"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+[[headers]]
+  for = "/_framework/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+
+[[headers]]
+  for = "/image/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"

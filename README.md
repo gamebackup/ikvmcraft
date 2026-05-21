@@ -1,5 +1,46 @@
 # ikvmcraft
 
-![image](assets/preview.png)
+Minecraft 1.16.1 running in the browser via IKVM.NET + Mono/Wasm.
 
-python3 gen-static-libs.py /ikvm/bin/libiava.so:out/native/libiava.a /ikvm/bin/libzip.so:out/native/libzip.a /ikvm/bin/libnio.so:out/native/libnio.a /ikvm/bin/libnet.so:out/native/libnet.a /ikvm/bin/libmanagement.so:out/native/libmanagement.a /tmp/lwjgl/liblwjgl.so:../native-deps/out/mt/liblwjgl3.a /tmp/lwjgl/libglfw.so:../native-deps/out/mt/libglfw3.a /tmp/lwjgl/liblwjgl_stb.so:../native-deps/out/mt/liblwjgl_stb.a /tmp/lwjgl/libopenal.so:../native-deps/out/mt/liblwjgl_openal_stubs.a --symbol-list /tmp/lwjgl/libopenal.so:../native-deps/openal-symbols.txt --rename-symbol /tmp/lwjgl/libglfw.so:emscripten_glfw3_get_proc_address:glfwGetProcAddress --add-alias /tmp/lwjgl/libglfw.so:glfw3 --add-alias /tmp/lwjgl/libglfw.so:/tmp/lwjgl/liblwjgl_opengl.so --add-alias /tmp/lwjgl/libglfw.so:/tmp/lwjgl/libGL.so.1 --add-alias /tmp/lwjgl/liblwjgl.so:/tmp/lwjgl/liblwjgl_tinyfd.so > ../../../ikvm-wasm/loader/statics.c
+## Build
+
+Requires: .NET 10 SDK, node + pnpm, Emscripten (fetched automatically).
+
+```bash
+make deps asm-jars
+make build
+cd frontend && pnpm install && pnpm build
+```
+
+Output is `frontend/dist/`.
+
+## Deploy
+
+Host the `frontend/dist/` folder anywhere that can set these response headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Required for SharedArrayBuffer (Mono/Wasm threading). HTTPS is also required.
+
+### Deploy to Cloudflare Pages
+
+Push to GitHub, connect repo to Cloudflare Pages. The `_headers` file (included in the build output) handles headers automatically.
+
+### Deploy to Netlify
+
+Build locally or download the artifact from GitHub Actions, then drag-and-drop `frontend/dist/` onto Netlify's manual deploy. The `netlify.toml` at repo root handles the headers.
+
+### Deploy manually
+
+Upload `frontend/dist/` to your server. Configure nginx/Caddy/Apache to add the two headers above and serve over HTTPS.
+
+## Dev server
+
+```bash
+cd frontend && pnpm dev
+```
+
+Runs on `https://localhost:5021` with Vite proxies for Mojang API calls.

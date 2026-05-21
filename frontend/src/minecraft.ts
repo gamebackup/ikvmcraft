@@ -19,6 +19,12 @@ const DEV_PROXY_PREFIX_BY_HOST: Record<string, string> = {
 	"repo.maven.apache.org": "/proxy/maven-central-alt",
 };
 
+let disableProxies = false;
+
+export function setProxyBypass(bypass: boolean): void {
+	disableProxies = bypass;
+}
+
 interface PrismVersionList {
 	versions: PrismVersionEntry[];
 }
@@ -94,6 +100,13 @@ interface IntegrityExpectation {
 	size?: number;
 }
 
+export interface DownloadProgress {
+	phase: string;
+	current: number;
+	total: number;
+	label: string;
+}
+
 export interface DownloadMinecraftVersionToOpfsOptions {
 	prismMetaBaseUrl?: string;
 	resourceBaseUrl?: string;
@@ -102,6 +115,7 @@ export interface DownloadMinecraftVersionToOpfsOptions {
 	maxConcurrentAssetDownloads?: number;
 	maxConcurrentLibraryDownloads?: number;
 	minecraftOsName?: string;
+	onProgress?: (p: DownloadProgress) => void;
 }
 
 export interface DownloadMinecraftVersionToOpfsResult {
@@ -183,13 +197,13 @@ function ensureResponseOk(response: Response, url: string): void {
 }
 
 function toProxyPath(url: URL): string {
-	if (url.origin === location.origin) {
-		return `${url.pathname}${url.search}${url.hash}`;
+	if (url.origin === location.origin || disableProxies) {
+		return url.toString();
 	}
 
 	const prefix = DEV_PROXY_PREFIX_BY_HOST[url.hostname];
 	if (prefix === undefined) {
-		throw new Error(`No Vite dev proxy route configured for host '${url.hostname}'.`);
+		return url.toString();
 	}
 
 	return `${prefix}${url.pathname}${url.search}${url.hash}`;
@@ -381,10 +395,26 @@ async function assertIntegrity(
 	}
 }
 
-async function downloadBinary(url: string, expectation: IntegrityExpectation, context: string): Promise<ArrayBuffer> {
-	const data = await fetchArrayBuffer(url);
-	await assertIntegrity(data, expectation, context);
-	return data;
+function mavenMirrorUrl(url: string): string | undefined {
+	if (url.startsWith("https://libraries.minecraft.net/")) {
+		const path = url.slice("https://libraries.minecraft.net/".length);
+		return `https://repo1.maven.org/maven2/${path}`;
+	}
+}
+
+async function downloadBinary(url: string, expectation: IntegrityExpectation, context: string, fallbackUrls?: string[]): Promise<ArrayBuffer> {
+	const allUrls = [url, ...(fallbackUrls ?? [])];
+	const errors: Error[] = [];
+	for (const u of allUrls) {
+		try {
+			const data = await fetchArrayBuffer(u);
+			await assertIntegrity(data, expectation, context);
+			return data;
+		} catch (e) {
+			errors.push(e instanceof Error ? e : new Error(String(e)));
+		}
+	}
+	throw new Error(`Failed to download ${context} from all ${allUrls.length} URLs: ${errors.map(e => e.message).join("; ")}`);
 }
 
 async function getOrCreateDirectory(
@@ -489,7 +519,8 @@ async function writeFileToOpfs(
 	try {
 		await writable.write(content);
 	} finally {
-	await writable.close();
+		await writable.close();
+	}
 }
 
 function warnDownloadCheckFailure(context: string, error?: unknown): void {
@@ -498,7 +529,6 @@ function warnDownloadCheckFailure(context: string, error?: unknown): void {
 		return;
 	}
 	console.warn(`[minecraft] ${context}`, error);
-}
 }
 
 function collectAssetObjects(assetIndex: AssetIndex): AssetObjectDownload[] {
@@ -664,8 +694,13 @@ export async function downloadMinecraftVersionToOpfs(
 		DEFAULT_MAX_CONCURRENT_LIBRARY_DOWNLOADS,
 	);
 
+	const onProgress = options.onProgress;
+
 	const requestedVersion = ensureSafePathSegment(version, "version");
 	const versionListUrl = new URL("net.minecraft/index.json", prismMetaBaseUrl).toString();
+
+	onProgress?.({ phase: "manifest", current: 0, total: 1, label: "Fetching version info..." });
+
 	const versionList = await fetchJson<PrismVersionList>(versionListUrl);
 	const selectedVersion = versionList.versions.find((entry) => entry.version === requestedVersion);
 	if (selectedVersion === undefined) {
@@ -704,21 +739,40 @@ export async function downloadMinecraftVersionToOpfs(
 	const versionJsonPath = `${opfsRootDirectory}/versions/${resolvedVersion}/${resolvedVersion}.json`;
 	await writeFileToOpfs(root, versionJsonPath, versionManifestText);
 
+	onProgress?.({ phase: "libraries", current: 0, total: 1, label: "Downloading libraries..." });
+
 	const libraries = collectLibraryDownloads(versionManifest.libraries, libraryBaseUrl, minecraftOsName);
+	const libTotal = libraries.length;
+
+	onProgress?.({ phase: "libraries", current: 0, total: libTotal, label: `Libraries (0/${libTotal})` });
+
+	let libDone = 0;
 	await runConcurrently(libraries, maxConcurrentLibraryDownloads, async (library) => {
+		const fallbacks: string[] = [];
+		const mirror = mavenMirrorUrl(library.url);
+		if (mirror) fallbacks.push(mirror);
+		if (library.url.startsWith("https://libraries.minecraft.net/")) {
+			const path = library.url.slice("https://libraries.minecraft.net/".length);
+			fallbacks.push(`/_libraries/${path}`);
+		}
 		const libraryData = await downloadBinary(
 			library.url,
 			{ sha1: library.sha1, size: library.size },
 			`library '${library.name}'`,
+			fallbacks.length > 0 ? fallbacks : undefined,
 		);
 		const libraryPath = `${opfsRootDirectory}/libraries/${library.relativePath}`;
 		await writeFileToOpfs(root, libraryPath, libraryData);
+		libDone++;
+		onProgress?.({ phase: "libraries", current: libDone, total: libTotal, label: `Libraries (${libDone}/${libTotal})` });
 	});
 
+	onProgress?.({ phase: "jar", current: 0, total: 1, label: "Downloading client JAR..." });
 	const clientJarData = await downloadBinary(clientDownload.url, clientDownload, `client jar '${resolvedVersion}'`);
 	const clientJarPath = `${opfsRootDirectory}/versions/${resolvedVersion}/${resolvedVersion}.jar`;
 	await writeFileToOpfs(root, clientJarPath, clientJarData);
 
+	onProgress?.({ phase: "index", current: 0, total: 1, label: "Downloading asset index..." });
 	const assetIndexData = await downloadBinary(
 		assetIndexDownload.url,
 		assetIndexDownload,
@@ -730,17 +784,31 @@ export async function downloadMinecraftVersionToOpfs(
 	await writeFileToOpfs(root, assetIndexPath, assetIndexText);
 
 	const assetObjects = collectAssetObjects(parsedAssetIndex);
+	const assetTotal = assetObjects.length;
+
+	onProgress?.({ phase: "assets", current: 0, total: assetTotal, label: `Assets (0/${assetTotal})` });
+
+	const assetErrors: Error[] = [];
+	let assetDone = 0;
 	await runConcurrently(assetObjects, maxConcurrentAssetDownloads, async (assetObject) => {
 		const prefix = assetObject.hash.slice(0, 2);
 		const objectUrl = new URL(`${prefix}/${assetObject.hash}`, resourceBaseUrl).toString();
 		const objectPath = `${opfsRootDirectory}/assets/objects/${prefix}/${assetObject.hash}`;
-		const objectData = await downloadBinary(
-			objectUrl,
-			{ sha1: assetObject.hash, size: assetObject.size },
-			`asset object '${assetObject.hash}'`,
-		);
-		await writeFileToOpfs(root, objectPath, objectData);
+		try {
+			const objectData = await downloadBinary(objectUrl, { sha1: assetObject.hash, size: assetObject.size }, `asset object '${assetObject.hash}'`);
+			await writeFileToOpfs(root, objectPath, objectData);
+		} catch (e) {
+			assetErrors.push(e instanceof Error ? e : new Error(String(e)));
+		}
+		assetDone++;
+		onProgress?.({ phase: "assets", current: assetDone, total: assetTotal, label: `Assets (${assetDone}/${assetTotal})` });
 	});
+
+	if (assetErrors.length > 0) {
+		console.warn(`[minecraft] ${assetErrors.length} of ${assetTotal} assets failed to download.`, assetErrors);
+	}
+
+	onProgress?.({ phase: "done", current: 1, total: 1, label: "Minecraft downloaded!" });
 
 	return {
 		version: resolvedVersion,

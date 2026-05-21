@@ -47,7 +47,7 @@
 
 		<MicrosoftNetCoreAppRuntimePackDir>$(MSBuildProjectDirectory)\..\statics\dotnet</MicrosoftNetCoreAppRuntimePackDir>
 		<MicrosoftNetCoreAppRuntimePackRidDir>$(MicrosoftNetCoreAppRuntimePackDir)\runtimes\browser-wasm</MicrosoftNetCoreAppRuntimePackRidDir>
-		<MonoAotCrossDir>/home/r58playz/fna-wasm/monomod/runtime/artifacts/bin/mono/browser.wasm.Release/cross/browser-wasm</MonoAotCrossDir>
+		<MonoAotCrossDir>/home/ashlyn/.dotnet/packs/Microsoft.NETCore.App.Runtime.AOT.linux-x64.Cross.browser-wasm/10.0.8/tools</MonoAotCrossDir>
 		<EmsdkRoot>$(MSBuildProjectDirectory)\..\statics\emsdk\</EmsdkRoot>
 		<WasmCachePath>$(EmsdkRoot)\emscripten\cache\</WasmCachePath>
 		<__EmscriptenSdkToolsPath>$(EmsdkRoot)</__EmscriptenSdkToolsPath>
@@ -69,7 +69,6 @@
 		<AOTWhitelist Include="IKVM.Runtime" />
 
 		<AOTWhitelist Include="ikvmc_lwjgl3" />
-		<AOTWhitelist Include="ikvmc_joml" />
 		<AOTWhitelist Include="ikvmc_log4j" />
 		<AOTWhitelist Include="ikvmc_asm" />
 	</ItemGroup>
@@ -136,7 +135,6 @@
 		<PackageReference Include="System.Runtime.Serialization.Formatters" Version="10.0.3" />
 
 		<Reference Include="..\statics\ikvmc_lwjgl3.dll" />
-		<Reference Include="..\jars\ikvmc_joml.dll" />
 		<Reference Include="..\jars\ikvmc_log4j.dll" />
 		<Reference Include="..\jars\ikvmc_asm.dll" />
 	</ItemGroup>

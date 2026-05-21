@@ -1,0 +1,9 @@
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+
+/_framework/*
+  Access-Control-Allow-Origin: *
+
+/image/*
+  Access-Control-Allow-Origin: *
